@@ -7,7 +7,7 @@ import json
 import pytest
 from fastapi.testclient import TestClient
 
-from web_ai_assistant.rag import Answer
+from web_ai_assistant.rag import Answer, StreamAnswer
 from web_ai_assistant.server import create_app
 
 
@@ -30,6 +30,14 @@ class FakeAssistant:
             sources=[{"id": 1, "title": "CSS/flexbox", "url": "https://example.org/fb", "sim": 0.91}],
             max_sim=0.91,
         )
+
+    # имитация настоящего стриминга: режем фразу на 4 чанка
+    def ask_stream(self, question: str) -> StreamAnswer:
+        a = self.ask(question)
+        if a.blocked:
+            return StreamAnswer(tokens=iter([a.answer]), blocked=a.blocked, max_sim=a.max_sim)
+        chunks = ["Flexbox ", "— это ", "раскладка ", "[1]."]
+        return StreamAnswer(tokens=iter(chunks), sources=a.sources, max_sim=a.max_sim)
 
 
 @pytest.fixture
@@ -96,7 +104,7 @@ def _parse_sse(text: str) -> list[dict]:
 
 
 def test_ask_stream_sse_format(client):
-    """SSE: meta → токены → done с источниками."""
+    """SSE: meta → токены (несколько) → done с источниками."""
     with client.stream("POST", "/ask/stream", json={"question": "Что такое flexbox?"}) as r:
         assert r.status_code == 200
         assert r.headers["content-type"].startswith("text/event-stream")
@@ -104,13 +112,12 @@ def test_ask_stream_sse_format(client):
     events = _parse_sse(body)
     assert events[0]["event"] == "meta"
     assert events[0]["data"]["blocked"] is None
-    # хотя бы один token
-    assert any(e["event"] == "token" for e in events)
-    # последний — done с sources
+    assert events[0]["data"]["source_count"] == 1
+    token_events = [e for e in events if e["event"] == "token"]
+    assert len(token_events) >= 2, "ожидаем настоящий token-by-token streaming"
     assert events[-1]["event"] == "done"
     assert len(events[-1]["data"]["sources"]) == 1
-    # сборка ответа из токенов
-    full = "".join(e["data"]["text"] for e in events if e["event"] == "token")
+    full = "".join(e["data"]["text"] for e in token_events)
     assert full == "Flexbox — это раскладка [1]."
 
 
@@ -120,6 +127,8 @@ def test_ask_stream_blocked_short_circuits(client):
     events = _parse_sse(body)
     assert events[0]["data"]["blocked"] == "red_zone"
     assert events[-1]["event"] == "done"
+    # в блоке — ровно один токен (готовый текст отказа)
+    assert sum(1 for e in events if e["event"] == "token") == 1
 
 
 def test_assistant_not_ready_returns_503():

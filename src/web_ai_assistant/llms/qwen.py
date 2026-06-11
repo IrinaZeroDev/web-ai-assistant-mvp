@@ -1,12 +1,15 @@
-"""Обёртка над локальным Qwen2.5-7B-Instruct в 4-битной квантизации."""
+"""Локальный Qwen2.5-7B-Instruct в 4-битной квантизации (для T4 GPU)."""
 
 from __future__ import annotations
 
+from collections.abc import Iterator
+
 
 class LocalQwenLLM:
-    """Qwen2.5-7B-Instruct, 4-bit, для T4 GPU (~6 GB VRAM)."""
+    """Qwen2.5-7B-Instruct, 4-bit, ~6 GB VRAM."""
 
     MODEL_ID = "Qwen/Qwen2.5-7B-Instruct"
+    supports_streaming: bool = True
 
     def __init__(self, model_id: str | None = None):
         import torch
@@ -27,6 +30,8 @@ class LocalQwenLLM:
         )
         self.model.eval()
         self._torch = torch
+
+    # ---------- sync ----------
 
     def generate(
         self,
@@ -49,3 +54,40 @@ class LocalQwenLLM:
             )
         gen = out[0][inputs.input_ids.shape[1] :]
         return self.tokenizer.decode(gen, skip_special_tokens=True).strip()
+
+    # ---------- streaming ----------
+
+    def stream_generate(
+        self,
+        messages: list[dict],
+        max_new_tokens: int = 512,
+        temperature: float = 0.2,
+    ) -> Iterator[str]:
+        """Token-by-token стриминг через ``TextIteratorStreamer``."""
+        import threading
+
+        from transformers import TextIteratorStreamer
+
+        prompt = self.tokenizer.apply_chat_template(
+            messages, tokenize=False, add_generation_prompt=True
+        )
+        inputs = self.tokenizer(prompt, return_tensors="pt").to(self.model.device)
+        streamer = TextIteratorStreamer(self.tokenizer, skip_prompt=True, skip_special_tokens=True)
+
+        thread = threading.Thread(
+            target=self.model.generate,
+            kwargs={
+                **inputs,
+                "max_new_tokens": max_new_tokens,
+                "do_sample": temperature > 0,
+                "temperature": temperature,
+                "top_p": 0.9,
+                "pad_token_id": self.tokenizer.eos_token_id,
+                "streamer": streamer,
+            },
+        )
+        thread.start()
+        for chunk in streamer:
+            if chunk:
+                yield chunk
+        thread.join()

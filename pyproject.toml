@@ -50,6 +50,9 @@ llm = [
     "bitsandbytes>=0.44; platform_system != 'Darwin'",
     "torch>=2.3",
 ]
+gigachat = [
+    "gigachat>=0.1.40",
+]
 eval = [
     "ragas>=0.2",
     "datasets>=3.0",

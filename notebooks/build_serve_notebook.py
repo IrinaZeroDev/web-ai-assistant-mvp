@@ -25,16 +25,48 @@ md("""# Serve в Colab: FastAPI + RAG + публичный URL
 > **GPU:** Runtime → Change runtime type → T4 GPU.
 """)
 
-md("## 1. Установка пакета")
+md("""## 1. Выбор LLM-провайдера
 
-code("""!pip install -q "git+https://github.com/IrinaZeroDev/web-ai-assistant-mvp.git@main#egg=web-ai-assistant[server,llm]"
+Доступны два варианта:
+
+- **Облачный GigaChat** (рекомендуется для пилота КД ИСТ ДГТУ — 152-ФЗ) — нужен Authorization Key из [личного кабинета GigaChat Studio](https://developers.sber.ru/portal/products/gigachat-api).
+- **Локальный Qwen2.5-7B** — без внешних API, нужен T4 GPU.
+
+Измените `PROVIDER` в ячейке ниже.
 """)
 
-md("## 2. Сборка корпуса и индекса (один раз)")
+code('''PROVIDER = "gigachat"   # "gigachat" | "qwen"
+''')
+
+md("## 2. Установка пакета")
+
+code("""extras = "server,gigachat" if PROVIDER == "gigachat" else "server,llm"
+!pip install -q "git+https://github.com/IrinaZeroDev/web-ai-assistant-mvp.git@main#egg=web-ai-assistant[$extras]"
+""")
+
+md("""### Ключ GigaChat
+
+Для GigaChat положите Authorization Key в Colab secrets (иконка ключа слева): `GIGACHAT_AUTH_KEY`.
+Также можно выбрать модель и scope (PERS / B2B / CORP).
+""")
+
+code('''import os
+if PROVIDER == "gigachat":
+    try:
+        from google.colab import userdata
+        os.environ["GIGACHAT_AUTH_KEY"] = userdata.get("GIGACHAT_AUTH_KEY")
+    except Exception:
+        pass
+    assert os.environ.get("GIGACHAT_AUTH_KEY"), "Задайте GIGACHAT_AUTH_KEY в Colab secrets"
+
+GIGACHAT_MODEL = "GigaChat"          # GigaChat | GigaChat-Pro | GigaChat-Max
+GIGACHAT_SCOPE = "GIGACHAT_API_PERS"  # PERS | B2B | CORP
+''')
+
+md("## 3. Сборка корпуса и индекса")
 
 code('''from web_ai_assistant.corpus import load_mdn_corpus, split_documents
 from web_ai_assistant.index import E5VectorIndex
-from web_ai_assistant.llm import LocalQwenLLM
 from web_ai_assistant.rag import RAGAssistant
 
 print("→ корпус…")
@@ -46,14 +78,20 @@ print("→ индекс (e5)…")
 index = E5VectorIndex()
 index.add(chunks)
 
-print("→ LLM (Qwen2.5-7B, 4-bit)…")
-llm = LocalQwenLLM()
+print(f"→ LLM ({PROVIDER})…")
+if PROVIDER == "gigachat":
+    from web_ai_assistant.llms import GigaChatLLM
+    llm = GigaChatLLM(model=GIGACHAT_MODEL, scope=GIGACHAT_SCOPE, verify_ssl_certs=False)
+else:
+    from web_ai_assistant.llms import LocalQwenLLM
+    llm = LocalQwenLLM()
 
 bot = RAGAssistant(index=index, llm=llm)
-print("ready:", bot.ask("Что такое flexbox?").answer[:120])
+print("streaming:", bot.supports_streaming)
+print("ready:", bot.ask("Что такое flexbox?").answer[:200])
 ''')
 
-md("## 3. Запуск FastAPI в фоне")
+md("## 4. Запуск FastAPI в фоне")
 
 code('''import threading, time, uvicorn
 from web_ai_assistant.server import create_app
@@ -70,7 +108,7 @@ import requests
 print(requests.get("http://127.0.0.1:8000/healthz", timeout=3).json())
 ''')
 
-md("""## 4. Публичный URL
+md("""## 5. Публичный URL
 
 Сначала пробуем **ngrok** (стабильнее, нужен бесплатный authtoken на [ngrok.com](https://dashboard.ngrok.com/get-started/your-authtoken)).
 Положите токен в Colab secrets: иконка ключа слева → Name = `NGROK_AUTHTOKEN`.
@@ -113,7 +151,7 @@ else:
 assert PUBLIC_URL, "не удалось получить публичный URL"
 ''')
 
-md("## 5. Smoke-test через публичный URL")
+md("## 6. Smoke-test через публичный URL")
 
 code('''import requests, json
 
@@ -130,13 +168,13 @@ print(r["answer"][:300])
 print("sources:", [s["title"] for s in r["sources"]])
 ''')
 
-md("## 6. Ссылка для Vue-демо\n\nОткройте локально `static/index.html` со страницей или хостингом по своему вкусу и добавьте `?backend=<URL>`. Например:")
+md("## 7. Ссылка для Vue-демо\n\nОткройте локально `static/index.html` со страницей или хостингом по своему вкусу и добавьте `?backend=<URL>`. Например:")
 
 code('''print(f"Vue-demo URL pattern:\\n  https://<your-static-host>/index.html?backend={PUBLIC_URL}\\n")
 print(f"Или \u2014 если фронт раздаётся самим backend:\\n  {PUBLIC_URL}/")
 ''')
 
-md("""## 7. Остановка
+md("""## 8. Остановка
 
 Закройте Colab или перезапустите runtime — fastapi и туннель остановятся вместе с процессом.
 """)

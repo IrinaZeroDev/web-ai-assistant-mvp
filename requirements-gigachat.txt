@@ -1,0 +1,2 @@
+# Sber GigaChat — облачный LLM-провайдер.
+gigachat>=0.1.40
