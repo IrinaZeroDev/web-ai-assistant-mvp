@@ -4,6 +4,14 @@ on:
   push:
     tags:
       - "v*"
+  release:
+    types: [published, edited]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Tag to build & attach (e.g. v0.1.0)"
+        required: true
+        default: "v0.1.0"
 
 permissions:
   contents: write
@@ -14,6 +22,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
+        with:
+          ref: ${{ github.event.inputs.tag || github.ref }}
       - uses: actions/setup-python@v6
         with:
           python-version: "3.12"
@@ -27,4 +37,5 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           files: dist/*
+          tag_name: ${{ github.event.inputs.tag || github.ref_name }}
           generate_release_notes: false
