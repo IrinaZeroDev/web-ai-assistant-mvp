@@ -1,0 +1,52 @@
+version: 2
+updates:
+  # Python-зависимости — общий тип, покрывает pyproject.toml и requirements*.txt
+  - package-ecosystem: "pip"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "07:00"
+      timezone: "Europe/Moscow"
+    open-pull-requests-limit: 5
+    labels:
+      - "dependencies"
+      - "python"
+    commit-message:
+      prefix: "deps"
+      include: "scope"
+    groups:
+      langchain-ecosystem:
+        patterns:
+          - "langchain*"
+      ml-stack:
+        patterns:
+          - "transformers"
+          - "accelerate"
+          - "bitsandbytes"
+          - "sentence-transformers"
+          - "torch"
+      eval-stack:
+        patterns:
+          - "ragas"
+          - "datasets"
+      dev-tools:
+        patterns:
+          - "pytest*"
+          - "ruff"
+          - "nbformat"
+
+  # GitHub Actions
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "07:00"
+      timezone: "Europe/Moscow"
+    labels:
+      - "dependencies"
+      - "github-actions"
+    commit-message:
+      prefix: "ci"
+      include: "scope"
