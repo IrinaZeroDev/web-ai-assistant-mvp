@@ -1,0 +1,5 @@
+# Метрики качества RAG (faithfulness, recall, precision, answer relevancy).
+ragas==0.2.6
+datasets==3.1.0
+pandas>=2.0
+langchain-huggingface==0.1.2

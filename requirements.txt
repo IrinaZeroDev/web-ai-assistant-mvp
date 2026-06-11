@@ -1,0 +1,8 @@
+# Production runtime dependencies (без тяжёлого ML — для лёгкой установки/CI).
+# Тяжёлые ML-зависимости — в extras: `pip install .[llm,eval]`.
+requests==2.32.3
+beautifulsoup4==4.12.3
+langchain==0.3.9
+langchain-community==0.3.8
+chromadb==0.5.23
+sentence-transformers==3.3.1

@@ -1,0 +1,5 @@
+# LLM + 4-bit quantization (нужно GPU; ставится в Colab).
+transformers==4.46.3
+accelerate==1.1.1
+bitsandbytes==0.44.1
+torch>=2.3
