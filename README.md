@@ -26,6 +26,36 @@ pip install -e ".[dev]"
 
 Откройте [`notebooks/web_ai_assistant_mvp.ipynb`](notebooks/web_ai_assistant_mvp.ipynb) в Google Colab, выберите T4 GPU и Run all.
 
+## Запуск HTTP-сервиса (FastAPI + SSE)
+
+```bash
+pip install -e ".[server,llm]"
+uvicorn web_ai_assistant.server:create_app --factory --host 0.0.0.0 --port 8000
+```
+
+Эндпоинты:
+
+| Метод | Путь | Назначение |
+|--------|------|------------|
+| `GET`  | `/healthz`     | Статус сервиса |
+| `POST` | `/ask`         | Синхронный JSON-ответ |
+| `POST` | `/ask/stream`  | SSE-стрим (events: `meta` → `token`… → `done`) |
+| `GET`  | `/`            | Vue-демо (если `static_dir` передан) |
+
+### Разворачивание в Colab
+
+[`notebooks/serve_colab.ipynb`](notebooks/serve_colab.ipynb) — сквозной запуск и публикация через ngrok (если есть `NGROK_AUTHTOKEN` в Colab secrets) или cloudflared (без регистрации, одноразовый URL).
+
+### Vue-демо
+
+Статика лежит в `static/` (3 файла, без сборки). Бэкенд-URL подхватывается в порядке:
+
+1. `?backend=<URL>` в адресной строке — удобно для расшаривания ngrok-URL,
+2. `localStorage['backend_url']` (сохраняется из #1),
+3. `window.location.origin` — если фронт раздаётся самим FastAPI.
+
+Если backend недоступен — фронт автоматически откатывается на встроенные оффлайн-сценарии.
+
 ## Программный API
 
 ```python
