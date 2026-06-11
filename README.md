@@ -25,6 +25,27 @@ pip install -e ".[llm,eval]"
 pip install -e ".[dev]"
 ```
 
+## Провайдеры эмбеддингов
+
+| Провайдер | Класс | dim | Когда брать |
+|------------|-------|-----|-------------|
+| **GigaChat** (`Embeddings`)      | `web_ai_assistant.embeddings.GigaChatEmbedder` | 1024 | Продакшн без GPU, 152-ФЗ |
+| **GigaChat** (`EmbeddingsGigaR`) | `web_ai_assistant.embeddings.GigaChatEmbedder` | 2560 | Максимальное качество, до 4K токенов, инструкции для query |
+| **e5-multilingual** (local)      | `web_ai_assistant.embeddings.E5Embedder`       | 1024 | Offline, исследования |
+
+```python
+from web_ai_assistant.embeddings import GigaChatEmbedder
+from web_ai_assistant.index import VectorIndex
+
+embedder = GigaChatEmbedder(
+    model="EmbeddingsGigaR",                  # 2560-dim
+    scope="GIGACHAT_API_PERS",
+    verify_ssl_certs=False,
+    query_instruction="Найди материалы курса, отвечающие на вопрос:",
+)
+index = VectorIndex(embedder=embedder)
+```
+
 ## LLM-провайдеры
 
 | Провайдер | Класс | Когда брать |
@@ -85,17 +106,18 @@ uvicorn web_ai_assistant.server:create_app --factory --host 0.0.0.0 --port 8000
 
 ```python
 from web_ai_assistant.corpus import load_mdn_corpus, split_documents
-from web_ai_assistant.index import E5VectorIndex
-from web_ai_assistant.llms import LocalQwenLLM
+from web_ai_assistant.embeddings import GigaChatEmbedder
+from web_ai_assistant.index import VectorIndex
+from web_ai_assistant.llms import GigaChatLLM
 from web_ai_assistant.rag import RAGAssistant
 
 docs = load_mdn_corpus()
 chunks = split_documents(docs)
 
-index = E5VectorIndex()
+index = VectorIndex(GigaChatEmbedder(verify_ssl_certs=False))
 index.add(chunks)
 
-bot = RAGAssistant(index=index, llm=LocalQwenLLM())
+bot = RAGAssistant(index=index, llm=GigaChatLLM(verify_ssl_certs=False))
 
 result = bot.ask("Что такое flexbox?")
 print(result.answer)
