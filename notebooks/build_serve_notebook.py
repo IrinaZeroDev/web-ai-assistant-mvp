@@ -22,36 +22,41 @@ md("""# Serve в Colab: FastAPI + RAG + публичный URL
    иначе через **cloudflared** (без регистрации, одноразовый URL).
 4. Печатает ссылку для Vue-демо: `https://…/?backend=https://…`.
 
-> **GPU:** Runtime → Change runtime type → T4 GPU.
+> **GPU нужен только** если выбрана локальная модель (`PROVIDER="qwen"` или `EMBEDDINGS="e5"`).
 """)
 
-md("""## 1. Выбор LLM-провайдера
+md("""## 1. Выбор провайдеров
 
-Доступны два варианта:
+- **LLM**: облачный **GigaChat** (рекомендуется для пилота 152-ФЗ) или локальный **Qwen2.5-7B** (нужен GPU).
+- **Embeddings**: облачный **GigaChat** (без GPU) или локальный **e5-multilingual** (~1 GB VRAM).
 
-- **Облачный GigaChat** (рекомендуется для пилота КД ИСТ ДГТУ — 152-ФЗ) — нужен Authorization Key из [личного кабинета GigaChat Studio](https://developers.sber.ru/portal/products/gigachat-api).
-- **Локальный Qwen2.5-7B** — без внешних API, нужен T4 GPU.
-
-Измените `PROVIDER` в ячейке ниже.
+Если оба «gigachat» — GPU не нужен вообще, можно использовать любой Colab runtime.
 """)
 
-code('''PROVIDER = "gigachat"   # "gigachat" | "qwen"
+code('''PROVIDER   = "gigachat"   # LLM:      "gigachat" | "qwen"
+EMBEDDINGS = "gigachat"   # embedder: "gigachat" | "e5"
 ''')
 
 md("## 2. Установка пакета")
 
-code("""extras = "server,gigachat" if PROVIDER == "gigachat" else "server,llm"
-!pip install -q "git+https://github.com/IrinaZeroDev/web-ai-assistant-mvp.git@main#egg=web-ai-assistant[$extras]"
+code("""extras = {"server"}
+extras.add("gigachat" if PROVIDER == "gigachat" else "llm")
+if EMBEDDINGS == "gigachat":
+    extras.add("gigachat")
+elif EMBEDDINGS == "e5":
+    # e5 идёт вместе с базовым набором RAG-ядра; убедимся что sentence-transformers есть
+    pass
+spec = "web-ai-assistant[" + ",".join(sorted(extras)) + "]"
+!pip install -q "git+https://github.com/IrinaZeroDev/web-ai-assistant-mvp.git@main#egg=$spec"
 """)
 
-md("""### Ключ GigaChat
+md("""### Ключи и параметры
 
-Для GigaChat положите Authorization Key в Colab secrets (иконка ключа слева): `GIGACHAT_AUTH_KEY`.
-Также можно выбрать модель и scope (PERS / B2B / CORP).
+Для GigaChat (LLM или embeddings) положите Authorization Key в Colab secrets (иконка ключа слева): `GIGACHAT_AUTH_KEY`.
 """)
 
 code('''import os
-if PROVIDER == "gigachat":
+if PROVIDER == "gigachat" or EMBEDDINGS == "gigachat":
     try:
         from google.colab import userdata
         os.environ["GIGACHAT_AUTH_KEY"] = userdata.get("GIGACHAT_AUTH_KEY")
@@ -59,14 +64,15 @@ if PROVIDER == "gigachat":
         pass
     assert os.environ.get("GIGACHAT_AUTH_KEY"), "Задайте GIGACHAT_AUTH_KEY в Colab secrets"
 
-GIGACHAT_MODEL = "GigaChat"          # GigaChat | GigaChat-Pro | GigaChat-Max
-GIGACHAT_SCOPE = "GIGACHAT_API_PERS"  # PERS | B2B | CORP
+GIGACHAT_MODEL     = "GigaChat"          # GigaChat | GigaChat-Pro | GigaChat-Max
+GIGACHAT_EMB_MODEL = "Embeddings"        # Embeddings (1024) | EmbeddingsGigaR (2560)
+GIGACHAT_SCOPE     = "GIGACHAT_API_PERS" # PERS | B2B | CORP
 ''')
 
-md("## 3. Сборка корпуса и индекса")
+md("## 3. Сборка корпуса, индекса и LLM")
 
 code('''from web_ai_assistant.corpus import load_mdn_corpus, split_documents
-from web_ai_assistant.index import E5VectorIndex
+from web_ai_assistant.index import VectorIndex
 from web_ai_assistant.rag import RAGAssistant
 
 print("→ корпус…")
@@ -74,9 +80,21 @@ docs = load_mdn_corpus()
 chunks = split_documents(docs)
 print(f"  чанков: {len(chunks)}")
 
-print("→ индекс (e5)…")
-index = E5VectorIndex()
+print(f"→ эмбеддинги ({EMBEDDINGS})…")
+if EMBEDDINGS == "gigachat":
+    from web_ai_assistant.embeddings import GigaChatEmbedder
+    embedder = GigaChatEmbedder(
+        model=GIGACHAT_EMB_MODEL,
+        scope=GIGACHAT_SCOPE,
+        verify_ssl_certs=False,
+    )
+else:
+    from web_ai_assistant.embeddings import E5Embedder
+    embedder = E5Embedder()   # требует GPU
+
+index = VectorIndex(embedder=embedder)
 index.add(chunks)
+print(f"  dim: {embedder.dim}")
 
 print(f"→ LLM ({PROVIDER})…")
 if PROVIDER == "gigachat":
@@ -93,10 +111,13 @@ print("ready:", bot.ask("Что такое flexbox?").answer[:200])
 
 md("## 4. Запуск FastAPI в фоне")
 
-code('''import threading, time, uvicorn
+code('''import os, threading, time, uvicorn
 from web_ai_assistant.server import create_app
 
-app = create_app(assistant_factory=lambda: bot, static_dir="/content/static" if __import__("os").path.isdir("/content/static") else None)
+app = create_app(
+    assistant_factory=lambda: bot,
+    static_dir="/content/static" if os.path.isdir("/content/static") else None,
+)
 
 def _run():
     uvicorn.run(app, host="127.0.0.1", port=8000, log_level="warning")
@@ -116,10 +137,10 @@ md("""## 5. Публичный URL
 Если токена нет — поднимаем **cloudflared** (одноразовый URL, без регистрации).
 """)
 
-code('''import os
+code('''import os, re, subprocess, time
 PUBLIC_URL = None
 
-# --- путь 1: ngrok ---
+# --- ngrok (предпочтительно) ---
 try:
     from google.colab import userdata
     token = userdata.get("NGROK_AUTHTOKEN")
@@ -132,15 +153,13 @@ if token:
     PUBLIC_URL = ngrok.connect(8000, "http").public_url
     print("ngrok ↑", PUBLIC_URL)
 else:
-    # --- путь 2: cloudflared ---
-    import subprocess, re, time
+    # --- cloudflared (fallback) ---
     !wget -q https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64 -O /usr/local/bin/cloudflared
     !chmod +x /usr/local/bin/cloudflared
     proc = subprocess.Popen(
         ["cloudflared", "tunnel", "--url", "http://127.0.0.1:8000", "--no-autoupdate"],
         stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True,
     )
-    # ловим сгенерированный URL из stdout
     for _ in range(120):
         line = proc.stdout.readline()
         m = re.search(r"https://[a-z0-9-]+\\.trycloudflare\\.com", line or "")
@@ -151,27 +170,63 @@ else:
 assert PUBLIC_URL, "не удалось получить публичный URL"
 ''')
 
-md("## 6. Smoke-test через публичный URL")
+md("""## 6. Smoke-test через публичный URL
 
-code('''import requests, json
+Бесплатные туннели иногда отдают HTML-предупреждение вместо JSON ответа:
+
+- **ngrok** — заголовок `ngrok-skip-browser-warning: 1` снимает это;
+- **cloudflared (trycloudflare)** — иногда первый запрос требует ретрая.
+
+Обёртка ниже честно показывает причину сбоя (статус + первые 300 символов тела),
+а не загадочный `JSONDecodeError`.
+""")
+
+code('''import json, time, requests
+
+SESSION = requests.Session()
+SESSION.headers.update({
+    "User-Agent": "web-ai-assistant-mvp/0.1 (educational)",
+    "ngrok-skip-browser-warning": "1",
+    "Accept": "application/json",
+})
+
+def _call(method, path, **kw):
+    url = PUBLIC_URL.rstrip("/") + path
+    last_text = ""
+    for attempt in range(4):
+        r = SESSION.request(method, url, timeout=60, **kw)
+        last_text = r.text
+        ctype = r.headers.get("content-type", "")
+        if r.ok and ctype.startswith("application/json"):
+            return r.json()
+        if r.status_code in (502, 503, 504):
+            time.sleep(1.5 * (attempt + 1)); continue
+        snippet = (r.text or "")[:300]
+        raise RuntimeError(f"{method} {path} → HTTP {r.status_code} ({ctype}). Сниппет: {snippet!r}")
+    raise RuntimeError(f"{method} {path}: 4 попытки, последний ответ: {last_text[:200]!r}")
 
 print("→ /healthz")
-print(json.dumps(requests.get(PUBLIC_URL + "/healthz", timeout=10).json(), indent=2, ensure_ascii=False))
+print(json.dumps(_call("GET", "/healthz"), indent=2, ensure_ascii=False))
 
-print("\\n→ /ask (red-zone должен заблокироваться)")
-r = requests.post(PUBLIC_URL + "/ask", json={"question": "Поставь мне оценку"}, timeout=30).json()
+print()
+print("→ /ask (red-zone должен заблокироваться)")
+r = _call("POST", "/ask", json={"question": "Поставь мне оценку"})
 print(json.dumps(r, indent=2, ensure_ascii=False))
 
-print("\\n→ /ask (типовой вопрос)")
-r = requests.post(PUBLIC_URL + "/ask", json={"question": "Что такое flexbox?"}, timeout=60).json()
+print()
+print("→ /ask (типовой вопрос)")
+r = _call("POST", "/ask", json={"question": "Что такое flexbox?"})
 print(r["answer"][:300])
 print("sources:", [s["title"] for s in r["sources"]])
 ''')
 
-md("## 7. Ссылка для Vue-демо\n\nОткройте локально `static/index.html` со страницей или хостингом по своему вкусу и добавьте `?backend=<URL>`. Например:")
+md("## 7. Ссылка для Vue-демо\n\nОткройте локально `static/index.html` или захостите по своему вкусу и добавьте `?backend=<URL>`. Например:")
 
-code('''print(f"Vue-demo URL pattern:\\n  https://<your-static-host>/index.html?backend={PUBLIC_URL}\\n")
-print(f"Или \u2014 если фронт раздаётся самим backend:\\n  {PUBLIC_URL}/")
+code('''print(f"Vue-demo URL pattern:")
+print(f"  https://<your-static-host>/index.html?backend={PUBLIC_URL}")
+print()
+print(f"Или \u2014 если фронт раздаётся самим backend:")
+print(f"  {PUBLIC_URL}/")
 ''')
 
 md("""## 8. Остановка
