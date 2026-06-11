@@ -151,32 +151,29 @@ def create_app(
         req: AskRequest, request: Request, bot: RAGAssistant = Depends(get_assistant)
     ) -> StreamingResponse:
         async def event_stream() -> AsyncIterator[bytes]:
-            # 1) выполняем ask() в worker thread, чтобы не блокировать loop
-            #    (внутри — синхронный LLM.generate)
-            answer = await asyncio.to_thread(bot.ask, req.question)
+            # 1) запускаем ask_stream() — синхронные retrieval и guard'ы в worker thread.
+            sa = await asyncio.to_thread(bot.ask_stream, req.question)
 
-            # 2) если запрос заблокирован — отдаём один кадр и done
-            if answer.blocked is not None:
-                yield _sse("meta", {"blocked": answer.blocked, "max_sim": answer.max_sim})
-                yield _sse("token", {"text": answer.answer})
-                yield _sse("done", {"sources": []})
-                return
-
-            # 3) иначе — стримим текст пословно, чтобы UI рисовал постепенно
             yield _sse(
                 "meta",
-                {"blocked": None, "max_sim": answer.max_sim, "source_count": len(answer.sources)},
+                {
+                    "blocked": sa.blocked,
+                    "max_sim": sa.max_sim,
+                    "source_count": len(sa.sources),
+                },
             )
-            for chunk in _chunk_text(answer.answer):
+
+            # 2) токен-итератор (может быть blocking — берём в to_thread поэлементно).
+            it = sa.tokens
+            while True:
                 if await request.is_disconnected():
                     return
-                yield _sse("token", {"text": chunk})
-                await asyncio.sleep(0.02)  # имитация streaming
+                token = await asyncio.to_thread(next, it, None)
+                if token is None:
+                    break
+                yield _sse("token", {"text": token})
 
-            yield _sse(
-                "done",
-                {"sources": [s for s in (answer.sources or [])]},
-            )
+            yield _sse("done", {"sources": list(sa.sources or [])})
 
         return StreamingResponse(
             event_stream(),
@@ -209,16 +206,4 @@ def _sse(event: str, data: dict) -> bytes:
     return f"event: {event}\ndata: {payload}\n\n".encode()
 
 
-def _chunk_text(text: str, size: int = 18) -> list[str]:
-    """Режет текст на короткие куски по словам — для имитации token-streaming."""
-    words = text.split(" ")
-    out, buf = [], ""
-    for w in words:
-        if len(buf) + len(w) + 1 > size and buf:
-            out.append(buf + " ")
-            buf = w
-        else:
-            buf = w if not buf else f"{buf} {w}"
-    if buf:
-        out.append(buf)
-    return out
+

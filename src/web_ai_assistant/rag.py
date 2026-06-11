@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterator
 from dataclasses import dataclass, field
-from typing import Protocol
+from typing import Protocol, runtime_checkable
 
 from .guards import (
     ESCALATION_REPLY,
@@ -26,8 +27,17 @@ class _Index(Protocol):
     def query(self, question: str, k: int = 4): ...
 
 
+@runtime_checkable
 class _LLM(Protocol):
+    """Протокол LLM. ``stream_generate`` опционален — выводится из ``supports_streaming``."""
+
+    supports_streaming: bool
+
     def generate(self, messages: list[dict], max_new_tokens: int = ..., temperature: float = ...) -> str: ...
+
+    def stream_generate(
+        self, messages: list[dict], max_new_tokens: int = ..., temperature: float = ...
+    ) -> Iterator[str]: ...
 
 
 @dataclass
@@ -36,6 +46,16 @@ class Answer:
     sources: list[dict] = field(default_factory=list)
     max_sim: float | None = None
     blocked: str | None = None  # red_zone | escalation | out_of_corpus | None
+
+
+@dataclass
+class StreamAnswer:
+    """Результат стриминга: метаданные известны сразу, токены — итератор."""
+
+    tokens: Iterator[str]
+    sources: list[dict] = field(default_factory=list)
+    max_sim: float | None = None
+    blocked: str | None = None
 
 
 def _build_context(docs: list[str], metas: list[dict]) -> str:
@@ -72,13 +92,70 @@ class RAGAssistant:
             return Answer(answer=OUT_OF_CORPUS_REPLY, max_sim=max_sim, blocked="out_of_corpus")
 
         # 5. LLM с RAG-промптом.
-        messages = [
-            {"role": "system", "content": SYSTEM_PROMPT},
-            {"role": "user", "content": f"Контекст:\n{_build_context(docs, metas)}\n\nВопрос: {question}"},
-        ]
+        messages = self._build_messages(docs, metas, question)
         text = self.llm.generate(messages, max_new_tokens=400, temperature=0.2)
-        sources = [
+        return Answer(
+            answer=text,
+            sources=self._sources_payload(metas, sims),
+            max_sim=max_sim,
+        )
+
+    # ---------- streaming ----------
+
+    @property
+    def supports_streaming(self) -> bool:
+        """True если подключённый LLM поддерживает token-by-token streaming."""
+        return bool(getattr(self.llm, "supports_streaming", False)) and hasattr(
+            self.llm, "stream_generate"
+        )
+
+    def ask_stream(self, question: str) -> StreamAnswer:
+        """Как ``ask``, но возвращает токен-итератор.
+
+        Метаданные (sources, blocked, max_sim) известны сразу и возвращаются в :class:`StreamAnswer`.
+        Генерация начинается в момент первого ``next(answer.tokens)``.
+        Для заблокированных запросов итератор выдаёт одну строку — готовый текст отказа.
+        """
+        # общая логика отказов совпадает с ask()
+        if is_red_zone(question):
+            return StreamAnswer(tokens=iter([RED_ZONE_REPLY]), blocked="red_zone")
+        if is_escalation(question):
+            return StreamAnswer(tokens=iter([ESCALATION_REPLY]), blocked="escalation")
+
+        docs, metas, sims = self.index.query(question, k=self.top_k)
+        max_sim = max(sims) if sims else 0.0
+        if max_sim < self.sim_threshold:
+            return StreamAnswer(
+                tokens=iter([OUT_OF_CORPUS_REPLY]),
+                max_sim=max_sim,
+                blocked="out_of_corpus",
+            )
+
+        messages = self._build_messages(docs, metas, question)
+        sources = self._sources_payload(metas, sims)
+
+        if self.supports_streaming:
+            tokens = self.llm.stream_generate(messages, max_new_tokens=400, temperature=0.2)
+        else:
+            # fallback — однократная выдача всего ответа
+            tokens = iter([self.llm.generate(messages, max_new_tokens=400, temperature=0.2)])
+
+        return StreamAnswer(tokens=tokens, sources=sources, max_sim=max_sim)
+
+    # ---------- helpers ----------
+
+    def _build_messages(self, docs: list[str], metas: list[dict], question: str) -> list[dict]:
+        return [
+            {"role": "system", "content": SYSTEM_PROMPT},
+            {
+                "role": "user",
+                "content": f"Контекст:\n{_build_context(docs, metas)}\n\nВопрос: {question}",
+            },
+        ]
+
+    @staticmethod
+    def _sources_payload(metas: list[dict], sims: list[float]) -> list[dict]:
+        return [
             {"id": i + 1, "title": m["title"], "url": m["url"], "sim": round(s, 3)}
             for i, (m, s) in enumerate(zip(metas, sims, strict=False))
         ]
-        return Answer(answer=text, sources=sources, max_sim=max_sim)

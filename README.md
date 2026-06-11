@@ -12,6 +12,9 @@ MVP-воспроизведение проекта **«ИИ-ассистент д
 # базовая установка (RAG-ядро, без LLM)
 pip install -e .
 
+# c облачным GigaChat (без GPU; рекомендуется для пилота 152-ФЗ)
+pip install -e ".[server,gigachat]"
+
 # с локальным LLM (Qwen2.5-7B, 4-bit) — нужно GPU
 pip install -e ".[llm]"
 
@@ -21,6 +24,28 @@ pip install -e ".[llm,eval]"
 # режим разработчика (pytest, ruff)
 pip install -e ".[dev]"
 ```
+
+## LLM-провайдеры
+
+| Провайдер | Класс | Когда брать |
+|------------|-------|-------------|
+| `GigaChatLLM` | `web_ai_assistant.llms.GigaChatLLM` | Пилот на дисциплинах (152-ФЗ / персональные данные в РФ), нет GPU |
+| `LocalQwenLLM` | `web_ai_assistant.llms.LocalQwenLLM` | Offline-разворачивание, исследования, T4 GPU доступен |
+
+### GigaChat
+
+```python
+from web_ai_assistant.llms import GigaChatLLM
+
+llm = GigaChatLLM(
+    auth_key="...",                # или через env: GIGACHAT_AUTH_KEY
+    model="GigaChat-Pro",          # GigaChat | GigaChat-Pro | GigaChat-Max
+    scope="GIGACHAT_API_PERS",     # PERS | B2B | CORP
+    verify_ssl_certs=False,        # True — если установлен сертификат НУЦ Минцифры
+)
+```
+
+Ключ получается в [личном кабинете GigaChat Studio](https://developers.sber.ru/portal/products/gigachat-api).  Провайдер поддерживает **настоящий token-streaming** через `bot.ask_stream(...)` — SSE-эндпоинт прокидывает токены в реальном времени.
 
 ## Быстрый старт (Colab)
 
@@ -61,7 +86,7 @@ uvicorn web_ai_assistant.server:create_app --factory --host 0.0.0.0 --port 8000
 ```python
 from web_ai_assistant.corpus import load_mdn_corpus, split_documents
 from web_ai_assistant.index import E5VectorIndex
-from web_ai_assistant.llm import LocalQwenLLM
+from web_ai_assistant.llms import LocalQwenLLM
 from web_ai_assistant.rag import RAGAssistant
 
 docs = load_mdn_corpus()
