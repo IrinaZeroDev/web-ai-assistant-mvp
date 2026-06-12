@@ -82,6 +82,7 @@ eval = [
 eval-ab = [
     "pyyaml>=6.0",
     "scipy>=1.11",
+    "jsonschema>=4.0",
 ]
 dev = [
     "pytest>=8.0",
@@ -95,12 +96,14 @@ dev = [
     "scikit-learn>=1.3",
     "pyyaml>=6.0",
     "scipy>=1.11",
+    "jsonschema>=4.0",
 ]
 
 [project.scripts]
 webai-cache = "web_ai_assistant.cli.cache:main"
 webai-threshold = "web_ai_assistant.cli.threshold:main"
 webai-ab = "web_ai_assistant.eval.ab:main"
+webai-eval-validate = "web_ai_assistant.cli.eval_validate:main"
 
 [project.urls]
 Homepage = "https://github.com/IrinaZeroDev/web-ai-assistant-mvp"
