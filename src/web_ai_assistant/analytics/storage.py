@@ -141,6 +141,28 @@ class QueryStore:
         with self._cursor() as cur:
             return [dict(r) for r in cur.execute(sql, (limit,)).fetchall()]
 
+    def max_sim_distribution(self) -> dict[str, list[float]]:
+        """Распределение ``max_sim`` для подбора порога (adaptive sim_threshold).
+
+        Возвращает ``{"in_corpus": [...], "out_of_corpus": [...]}``:
+
+        - **in_corpus** — отвеченные запросы (``blocked IS NULL``),
+        - **out_of_corpus** — заблокированные по порогу (``blocked='out_of_corpus'``).
+
+        ``NULL``-значения пропускаем (запросы, заблокированные до retrieval).
+        """
+        with self._cursor() as cur:
+            in_rows = cur.execute(
+                "SELECT max_sim FROM queries WHERE blocked IS NULL AND max_sim IS NOT NULL"
+            ).fetchall()
+            out_rows = cur.execute(
+                "SELECT max_sim FROM queries WHERE blocked = 'out_of_corpus' AND max_sim IS NOT NULL"
+            ).fetchall()
+        return {
+            "in_corpus": [float(r[0]) for r in in_rows],
+            "out_of_corpus": [float(r[0]) for r in out_rows],
+        }
+
     def all_for_clustering(self, *, only_unblocked: bool = False) -> list[dict]:
         """Достаёт записи с эмбеддингами для кластеризации."""
         sql = "SELECT id, ts, question, embedding FROM queries WHERE embedding IS NOT NULL"

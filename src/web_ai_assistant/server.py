@@ -36,6 +36,7 @@ from pydantic import BaseModel, Field
 
 from .analytics.clustering import cluster_queries
 from .analytics.storage import QueryLog, QueryStore, hash_ip
+from .analytics.threshold import suggest_threshold
 from .privacy import is_logging_enabled, redact
 from .rag import Answer, RAGAssistant
 
@@ -62,6 +63,10 @@ class AskResponse(BaseModel):
     sources: list[Source] = []
     max_sim: float | None = None
     blocked: str | None = None
+
+
+class ApplyThresholdRequest(BaseModel):
+    threshold: float = Field(..., ge=0.0, le=1.0)
 
 
 def _answer_to_response(a: Answer) -> AskResponse:
@@ -313,6 +318,42 @@ def create_app(
         if store is None:
             return []
         return store.recent(limit=limit)  # type: ignore[union-attr]
+
+    # ---------- admin: adaptive sim_threshold ----------
+
+    @app.get("/admin/api/threshold/suggest", dependencies=[Depends(require_admin)])
+    def admin_threshold_suggest(
+        method: str = "auto",
+        min_sample: int = 30,
+        fallback_percentile: float = 5.0,
+    ) -> dict:
+        store = state.get("store")
+        bot = state.get("assistant")
+        current = float(bot.sim_threshold) if bot is not None else None  # type: ignore[union-attr]
+        if store is None:
+            return {
+                "current": current,
+                "suggestion": None,
+                "error": "Логирование выключено — нет выборки для подбора порога.",
+            }
+        dist = store.max_sim_distribution()  # type: ignore[union-attr]
+        sug = suggest_threshold(
+            dist["in_corpus"],
+            dist["out_of_corpus"],
+            method=method,  # type: ignore[arg-type]
+            min_sample=min_sample,
+            fallback_percentile=fallback_percentile,
+        )
+        return {"current": current, "suggestion": sug.as_dict()}
+
+    @app.post("/admin/api/threshold/apply", dependencies=[Depends(require_admin)])
+    def admin_threshold_apply(req: ApplyThresholdRequest) -> dict:
+        bot = state.get("assistant")
+        if bot is None:
+            raise HTTPException(status_code=503, detail="Assistant not initialised.")
+        previous = float(bot.sim_threshold)  # type: ignore[union-attr]
+        bot.sim_threshold = float(req.threshold)  # type: ignore[union-attr]
+        return {"previous": previous, "applied": float(req.threshold)}
 
     @app.get("/admin/clusters", dependencies=[Depends(require_admin)], response_class=HTMLResponse)
     def admin_clusters_html(n: int = 8, backend: str = "kmeans") -> str:
