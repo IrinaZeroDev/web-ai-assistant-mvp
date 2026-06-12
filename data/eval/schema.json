@@ -1,0 +1,61 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/IrinaZeroDev/web-ai-assistant-mvp/data/eval/schema.json",
+  "title": "Eval Dataset Item",
+  "description": "Один пункт «золотого» датасета вопросов для пилота web-ai-assistant. Один JSON-объект на строку (JSONL).",
+  "type": "object",
+  "required": ["id", "question", "category"],
+  "additionalProperties": false,
+  "properties": {
+    "id": {
+      "type": "string",
+      "pattern": "^[a-z0-9_-]+$",
+      "description": "Стабильный идентификатор вопроса (например, 'frontend_html_01')."
+    },
+    "question": {
+      "type": "string",
+      "minLength": 5,
+      "description": "Текст вопроса как его задал бы студент."
+    },
+    "category": {
+      "type": "string",
+      "enum": ["in_corpus", "off_topic", "red_zone", "escalation"],
+      "description": "Поведенческая категория. См. data/eval/README.md."
+    },
+    "in_corpus": {
+      "type": "boolean",
+      "description": "Должен ли ассистент ответить (true) или отказать/эскалировать (false). Выводится из category, но дублируется для совместимости с EvalItem."
+    },
+    "ground_truth": {
+      "type": ["string", "null"],
+      "description": "Эталонный ответ (опционально, нужен RAGAS для context_recall)."
+    },
+    "expected_sources": {
+      "type": "array",
+      "items": {"type": "string"},
+      "description": "Список title/url ожидаемых источников из корпуса (опционально, для метрики recall@k по title)."
+    },
+    "discipline": {
+      "type": "string",
+      "description": "Дисциплина курса (frontend, system_analysis, ml, ...). Для per-discipline thresholds в будущем."
+    },
+    "topic": {
+      "type": "string",
+      "description": "Подтема (html, css, flexbox, ...). Произвольная строка."
+    },
+    "difficulty": {
+      "type": "string",
+      "enum": ["easy", "medium", "hard"],
+      "description": "Сложность для студента (не для retrieval). Опционально."
+    },
+    "source_pool": {
+      "type": "string",
+      "enum": ["mdn", "dstu_pdf", "mixed", "outside"],
+      "description": "Где должен находиться ответ: только MDN, только в PDF ДГТУ, в обоих, или вне корпуса."
+    },
+    "notes": {
+      "type": "string",
+      "description": "Комментарий автора-разметчика. Не используется в метриках."
+    }
+  }
+}
