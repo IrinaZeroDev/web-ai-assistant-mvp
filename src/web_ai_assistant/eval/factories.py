@@ -114,6 +114,8 @@ def build_from_yaml(path: str | Path):
         reranker=reranker,
         top_k_retrieval=int(rag_cfg.get("top_k_retrieval", 16)),
         rerank_threshold=rag_cfg.get("rerank_threshold"),
+        mmr=bool(rag_cfg.get("mmr", False)),
+        mmr_lambda=float(rag_cfg.get("mmr_lambda", 0.7)),
     )
 
 

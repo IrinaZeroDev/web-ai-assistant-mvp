@@ -44,13 +44,34 @@ class VectorIndex:
         )
         return self.collection.count()
 
-    def query(self, question: str, k: int = 4):
-        res = self.collection.query(
-            query_embeddings=[self.embedder.embed_query(question)], n_results=k
-        )
+    def query(self, question: str, k: int = 4, include_embeddings: bool = False):
+        """Top-k retrieval по cosine.
+
+        Args:
+            question: текст запроса.
+            k: сколько кандидатов вернуть.
+            include_embeddings: если ``True`` — дополнительно возвращает
+                эмбеддинги кандидатов (для MMR / diversity-фильтров).
+
+        Returns:
+            ``(docs, metas, sims)`` по умолчанию;
+            ``(docs, metas, sims, embeddings)`` при ``include_embeddings=True``.
+        """
+        kwargs: dict = {
+            "query_embeddings": [self.embedder.embed_query(question)],
+            "n_results": k,
+        }
+        if include_embeddings:
+            kwargs["include"] = ["documents", "metadatas", "distances", "embeddings"]
+        res = self.collection.query(**kwargs)
         docs = res["documents"][0]
         metas = res["metadatas"][0]
         sims = [1 - d for d in res["distances"][0]]  # cosine_sim = 1 - cosine_dist
+        if include_embeddings:
+            embs = res["embeddings"][0]
+            # ChromaDB может вернуть numpy-массивы — приводим к list[list[float]].
+            embs_out = [list(map(float, e)) for e in embs]
+            return docs, metas, sims, embs_out
         return docs, metas, sims
 
 
