@@ -93,6 +93,7 @@ dev = [
 
 [project.scripts]
 webai-cache = "web_ai_assistant.cli.cache:main"
+webai-threshold = "web_ai_assistant.cli.threshold:main"
 
 [project.urls]
 Homepage = "https://github.com/IrinaZeroDev/web-ai-assistant-mvp"

@@ -25,6 +25,39 @@ pip install -e ".[llm,eval]"
 pip install -e ".[dev]"
 ```
 
+## Adaptive `sim_threshold`
+
+Порог `sim_threshold` в `RAGAssistant` раньше выбирался вручную (`0.55` по умолчанию). Теперь его можно подобрать автоматически по реальным логам вашего корпуса.
+
+### Алгоритм
+
+1. Собираем `max_sim` из таблицы `queries`: in-corpus (`blocked IS NULL`) и out-of-corpus.
+2. Считаем **Sarle’s bimodality coefficient** — если BC > 5/9, объединённое распределение явно двухпиковое.
+3. При бимодальности берём **Otsu** (между двумя пиками) или **2-GMM**.
+4. При унимодальности откатываемся на P5 in-corpus.
+5. При `< min_sample` — возвращаем дефолт 0.55 с тэгом `too_few_samples`.
+
+### Endpoint’ы
+
+```bash
+# Рекомендация (JSON с histogram, current, suggestion, rationale)
+curl -u admin:<pwd> http://localhost:8000/admin/api/threshold/suggest
+curl -u admin:<pwd> 'http://localhost:8000/admin/api/threshold/suggest?method=gmm'
+
+# Применить (hot-reload bot.sim_threshold)
+curl -X POST -u admin:<pwd> -H 'Content-Type: application/json' \
+     -d '{"threshold": 0.62}' \
+     http://localhost:8000/admin/api/threshold/apply
+```
+
+### CLI
+
+```bash
+webai-threshold suggest --db logs/queries.db
+webai-threshold suggest --method gmm
+webai-threshold suggest --method percentile --percentile 5
+```
+
 ## Кэш эмбеддингов
 
 Снижает число API-вызовов GigaChat при переиндексации одного и того же корпуса. Хранилище — SQLite, ключ = `(model, sha256(text))`, поэтому `Embeddings` (1024) и `EmbeddingsGigaR` (2560) лежат в разных namespace.
