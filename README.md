@@ -159,6 +159,66 @@ app = create_app(
 
 Backend кластеризации меняется через query: `?backend=kmeans` (по умолчанию) или `?backend=hdbscan` (ставится через `pip install -e \".[hdbscan]\"`).
 
+## MMR — diversity в top-k retrieval
+
+На больших корпусах (подборка PDF-методичек) bi-encoder retrieval часто выдаёт 4 почти одинаковых фрагмента из одной главы — контекст «съедается» дублями, и покрытие темы страдает. **Maximal Marginal Relevance** (Carbonell & Goldstein, 1998) балансирует релевантность и новизну:
+
+```
+MMR(d_i) = λ · sim(q, d_i)  −  (1 − λ) · max_{d_j ∈ S} sim(d_i, d_j)
+```
+
+- `λ = 1.0` — чисто по релевантности (≡ обычный top-k);
+- `λ = 0.0` — чисто по разнообразию;
+- типично **0.5–0.7** (по умолчанию `mmr_lambda=0.7`).
+
+### Подключение
+
+```python
+from web_ai_assistant.rag import RAGAssistant
+
+rag = RAGAssistant(
+    index=index,
+    llm=llm,
+    top_k=4,
+    top_k_retrieval=16,    # пул для MMR
+    mmr=True,
+    mmr_lambda=0.7,
+    reranker=reranker,     # опционально: MMR работает ДО реранкера
+)
+```
+
+Или через YAML для `webai-ab`:
+
+```yaml
+rag:
+  top_k: 4
+  top_k_retrieval: 16
+  mmr: true
+  mmr_lambda: 0.7
+```
+
+### Порядок обработки
+
+1. Retrieve `top_k_retrieval` (bi-encoder, ChromaDB).
+2. Similarity gate по `max_sim`.
+3. **MMR-переупорядочивание** (новый шаг): без реранкера сразу урезает до `top_k`; с реранкером — меняет порядок в пуле.
+4. (Опц.) Cross-encoder rerank + `rerank_threshold`.
+5. Финальный top_k → LLM.
+
+### Как оценивать эффект
+
+`webai-ab` из предыдущего PR идеально подходит для A/B-теста `mmr: true` vs `mmr: false`:
+
+```bash
+webai-ab \
+  --a-config configs/baseline.yaml      --a-name baseline \
+  --b-config configs/with_mmr.yaml      --b-name mmr \
+  --questions data/eval_questions.jsonl \
+  --ragas --out-html reports/mmr.html
+```
+
+На корпусах с повторами типично: `source_overlap` падает (разные источники), `context_recall` растёт, `faithfulness` стабильна.
+
 ## A/B сравнение конфигов (`webai-ab`)
 
 Инструмент для пилотов: прогоняет два варианта `RAGAssistant` по одному набору вопросов и выдаёт сравнительную таблицу с быстрыми метриками, **парными статистическими тестами** (t-test + Wilcoxon) и **HTML-отчётом с bar-charts**.
