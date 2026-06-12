@@ -1,0 +1,2 @@
+# PDF parsing — pdfminer.six (текстовый слой).
+pdfminer.six>=20231228

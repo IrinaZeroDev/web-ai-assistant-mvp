@@ -1,0 +1,7 @@
+# OCR для отсканированных PDF (страниц без текстового слоя).
+# Дополнительно требует системные пакеты:
+#   apt-get install -y tesseract-ocr tesseract-ocr-rus poppler-utils
+pdfminer.six>=20231228
+pytesseract>=0.3.10
+pdf2image>=1.17
+Pillow>=10.0
