@@ -66,13 +66,32 @@ def _build_context(docs: list[str], metas: list[dict]) -> str:
 
 
 class RAGAssistant:
-    """Цепочка: red-zone → escalation → retrieve → similarity gate → LLM."""
+    """Цепочка: red-zone → escalation → retrieve → (rerank) → similarity gate → LLM.
 
-    def __init__(self, index: _Index, llm: _LLM, sim_threshold: float = 0.55, top_k: int = 4):
+    Если задан ``reranker``, выполняется over-retrieval (``top_k_retrieval``,
+    обычно 16) — затем cross-encoder перепроверяет фрагменты и оставляет
+    лучшие ``top_k`` (обычно 4). При ``rerank_threshold`` ниже него отбрасываются.
+    """
+
+    def __init__(
+        self,
+        index: _Index,
+        llm: _LLM,
+        sim_threshold: float = 0.55,
+        top_k: int = 4,
+        *,
+        reranker=None,
+        top_k_retrieval: int = 16,
+        rerank_threshold: float | None = None,
+    ):
         self.index = index
         self.llm = llm
         self.sim_threshold = sim_threshold
         self.top_k = top_k
+        self.reranker = reranker
+        # сколько достать ДО реранкинга — обычно в 4× больше итогового top_k
+        self.top_k_retrieval = max(top_k_retrieval, top_k)
+        self.rerank_threshold = rerank_threshold
 
     def ask(self, question: str) -> Answer:
         # 1. Архитектурный red-zone отказ (до retrieval!).
@@ -83,20 +102,27 @@ class RAGAssistant:
         if is_escalation(question):
             return Answer(answer=ESCALATION_REPLY, blocked="escalation")
 
-        # 3. Retrieval.
-        docs, metas, sims = self.index.query(question, k=self.top_k)
-        max_sim = max(sims) if sims else 0.0
+        # 3. Retrieval + (optional) reranking.
+        result = self._retrieve_and_rank(question)
+        if result.get("blocked"):
+            return Answer(
+                answer=result["reply"],
+                max_sim=result.get("max_sim"),
+                blocked=result["blocked"],
+            )
 
-        # 4. Out-of-corpus guard.
-        if max_sim < self.sim_threshold:
-            return Answer(answer=OUT_OF_CORPUS_REPLY, max_sim=max_sim, blocked="out_of_corpus")
+        docs = result["docs"]
+        metas = result["metas"]
+        sims = result["sims"]
+        rerank_scores = result["rerank_scores"]
+        max_sim = result["max_sim"]
 
-        # 5. LLM с RAG-промптом.
+        # 4. LLM с RAG-промптом.
         messages = self._build_messages(docs, metas, question)
         text = self.llm.generate(messages, max_new_tokens=400, temperature=0.2)
         return Answer(
             answer=text,
-            sources=self._sources_payload(metas, sims),
+            sources=self._sources_payload(metas, sims, rerank_scores),
             max_sim=max_sim,
         )
 
@@ -122,22 +148,26 @@ class RAGAssistant:
         if is_escalation(question):
             return StreamAnswer(tokens=iter([ESCALATION_REPLY]), blocked="escalation")
 
-        docs, metas, sims = self.index.query(question, k=self.top_k)
-        max_sim = max(sims) if sims else 0.0
-        if max_sim < self.sim_threshold:
+        result = self._retrieve_and_rank(question)
+        if result.get("blocked"):
             return StreamAnswer(
-                tokens=iter([OUT_OF_CORPUS_REPLY]),
-                max_sim=max_sim,
-                blocked="out_of_corpus",
+                tokens=iter([result["reply"]]),
+                max_sim=result.get("max_sim"),
+                blocked=result["blocked"],
             )
 
+        docs = result["docs"]
+        metas = result["metas"]
+        sims = result["sims"]
+        rerank_scores = result["rerank_scores"]
+        max_sim = result["max_sim"]
+
         messages = self._build_messages(docs, metas, question)
-        sources = self._sources_payload(metas, sims)
+        sources = self._sources_payload(metas, sims, rerank_scores)
 
         if self.supports_streaming:
             tokens = self.llm.stream_generate(messages, max_new_tokens=400, temperature=0.2)
         else:
-            # fallback — однократная выдача всего ответа
             tokens = iter([self.llm.generate(messages, max_new_tokens=400, temperature=0.2)])
 
         return StreamAnswer(tokens=tokens, sources=sources, max_sim=max_sim)
@@ -154,8 +184,92 @@ class RAGAssistant:
         ]
 
     @staticmethod
-    def _sources_payload(metas: list[dict], sims: list[float]) -> list[dict]:
-        return [
-            {"id": i + 1, "title": m["title"], "url": m["url"], "sim": round(s, 3)}
-            for i, (m, s) in enumerate(zip(metas, sims, strict=False))
-        ]
+    def _sources_payload(
+        metas: list[dict],
+        sims: list[float],
+        rerank_scores: list[float] | None = None,
+    ) -> list[dict]:
+        out: list[dict] = []
+        for i, (m, s) in enumerate(zip(metas, sims, strict=False)):
+            entry = {
+                "id": i + 1,
+                "title": m["title"],
+                "url": m["url"],
+                "sim": round(s, 3),
+            }
+            if rerank_scores is not None and i < len(rerank_scores):
+                entry["rerank_score"] = round(float(rerank_scores[i]), 3)
+            out.append(entry)
+        return out
+
+    # ---------- retrieve + rerank ----------
+
+    def _retrieve_and_rank(self, question: str) -> dict:
+        """Возвращает либо ``{"blocked": ..., "reply": ..., "max_sim": ...}``,
+        либо ``{"docs", "metas", "sims", "rerank_scores", "max_sim"}``.
+
+        Поведение:
+
+        1. Извлекаем ``top_k_retrieval`` фрагментов (over-retrieval).
+        2. Проверяем similarity gate по retrieval-скорам (``max_sim``).
+        3. Если задан ``reranker`` — пересортируем кандидатов по rerank_score.
+        4. Если задан ``rerank_threshold`` — отфильтровываем слабые.
+        5. Усекаем до ``top_k`` финальных.
+        """
+        k_retrieval = self.top_k_retrieval if self.reranker is not None else self.top_k
+        docs, metas, sims = self.index.query(question, k=k_retrieval)
+        max_sim = max(sims) if sims else 0.0
+
+        if max_sim < self.sim_threshold:
+            return {
+                "blocked": "out_of_corpus",
+                "reply": OUT_OF_CORPUS_REPLY,
+                "max_sim": max_sim,
+            }
+
+        rerank_scores: list[float] | None = None
+        if self.reranker is not None and docs:
+            try:
+                rerank_scores = list(self.reranker.rerank(question, docs))
+            except Exception:  # noqa: BLE001
+                rerank_scores = None
+
+            if rerank_scores is not None:
+                # сортируем по rerank_score (DESC), сохраняя соответствие metas/sims
+                order = sorted(
+                    range(len(docs)),
+                    key=lambda i: rerank_scores[i] if i < len(rerank_scores) else 0.0,
+                    reverse=True,
+                )
+                docs = [docs[i] for i in order]
+                metas = [metas[i] for i in order]
+                sims = [sims[i] for i in order]
+                rerank_scores = [rerank_scores[i] for i in order]
+
+                if self.rerank_threshold is not None:
+                    kept = [i for i, s in enumerate(rerank_scores) if s >= self.rerank_threshold]
+                    if not kept:
+                        return {
+                            "blocked": "out_of_corpus",
+                            "reply": OUT_OF_CORPUS_REPLY,
+                            "max_sim": max_sim,
+                        }
+                    docs = [docs[i] for i in kept]
+                    metas = [metas[i] for i in kept]
+                    sims = [sims[i] for i in kept]
+                    rerank_scores = [rerank_scores[i] for i in kept]
+
+        # финальная отсечка top_k
+        docs = docs[: self.top_k]
+        metas = metas[: self.top_k]
+        sims = sims[: self.top_k]
+        if rerank_scores is not None:
+            rerank_scores = rerank_scores[: self.top_k]
+
+        return {
+            "docs": docs,
+            "metas": metas,
+            "sims": sims,
+            "rerank_scores": rerank_scores,
+            "max_sim": max_sim,
+        }

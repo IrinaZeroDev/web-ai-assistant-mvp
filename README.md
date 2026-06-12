@@ -25,6 +25,40 @@ pip install -e ".[llm,eval]"
 pip install -e ".[dev]"
 ```
 
+## Reranker (подъём faithfulness)
+
+После bi-encoder retrieval (ChromaDB) можно включить второй слой — cross-encoder, который перепроверяет каждую пару (query, passage) совместно. На больших корпусах это основной рычаг подъёма **faithfulness ≥ 0.9**.
+
+| Backend | Класс | Когда брать |
+|---------|-------|-------------|
+| **BGE** (local) | `web_ai_assistant.rerankers.BGEReranker` | Есть GPU; максимальные скорость и качество. `BAAI/bge-reranker-v2-m3` |
+| **GigaChat-as-judge** | `web_ai_assistant.rerankers.GigaChatReranker` | Нет GPU, пилот 152-ФЗ. Медленнее/дороже (один HTTP на пару) |
+
+```python
+from web_ai_assistant.rag import RAGAssistant
+from web_ai_assistant.rerankers import BGEReranker  # or GigaChatReranker
+
+bot = RAGAssistant(
+    index=index,
+    llm=llm,
+    reranker=BGEReranker(device="cuda"),
+    top_k_retrieval=16,     # over-retrieval — берём 16 для перевзвешивания
+    top_k=4,                # финальные 4 пойдут в LLM-промпт
+    rerank_threshold=0.3,   # опционально: порог отбрасывания в out_of_corpus
+)
+```
+
+Как пиплайн выглядит:
+
+```
+query → bi-encoder retrieval (top_k_retrieval=16)
+      → cross-encoder rerank (сортировка по relevance)
+      → rerank_threshold filter   (если задан порог)
+      → top_k=4 в LLM → ответ с цитатами
+```
+
+Каждый источник в `Answer.sources` получает доп. поле `rerank_score ∈ [0, 1]`.
+
 ## Аналитика затруднений (дашборд топ-N кластеров)
 
 Каждый запрос логируется в SQLite (`logs/queries.db`), предварительно проходя PII-редакцию (email, телефоны, ФИО, студ.билеты). Для пилота 152-ФЗ этого достаточно.
