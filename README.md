@@ -159,6 +159,101 @@ app = create_app(
 
 Backend кластеризации меняется через query: `?backend=kmeans` (по умолчанию) или `?backend=hdbscan` (ставится через `pip install -e \".[hdbscan]\"`).
 
+## A/B сравнение конфигов (`webai-ab`)
+
+Инструмент для пилотов: прогоняет два варианта `RAGAssistant` по одному набору вопросов и выдаёт сравнительную таблицу с быстрыми метриками, **парными статистическими тестами** (t-test + Wilcoxon) и **HTML-отчётом с bar-charts**.
+
+### Что считается
+
+**Fast custom metrics** (без LLM-судьи, для каждого варианта):
+- `refusal_rate` — доля заблокированных ответов;
+- `refusal_accuracy` — если в датасете размечен `in_corpus`;
+- `mean_max_sim` — proxy для retrieval-качества;
+- `mean_rerank_score` — средний top-1 rerank;
+- `mean_latency_s` — среднее время ответа.
+
+**Парные тесты** (A vs B по одним и тем же вопросам): `paired t-test`, `Wilcoxon signed-rank`, Cohen's d_z.
+
+**Source overlap** — mean Jaccard top-K url'ов: насколько A и B вытаскивают одни и те же документы.
+
+**RAGAS** (опционально, `--ragas`) — `faithfulness`, `answer_relevancy`, `context_recall` (LLM-judge).
+
+### Установка
+
+```bash
+pip install -e ".[eval-ab]"          # pyyaml + scipy
+pip install -e ".[eval-ab,eval]"     # + RAGAS для --ragas
+```
+
+### Конфиги: YAML или Python-фабрика
+
+Декларативный YAML (`configs/with_reranker.yaml`):
+
+```yaml
+name: GigaChat + BGE reranker
+llm:
+  provider: gigachat
+  args: { model: GigaChat-Pro, verify_ssl_certs: false }
+embedder:
+  provider: gigachat
+  args: { model: Embeddings, verify_ssl_certs: false, cache_path: cache/emb.db }
+reranker:
+  provider: bge
+  args: { device: cuda }
+rag:
+  sim_threshold: 0.55
+  top_k: 4
+  top_k_retrieval: 16
+corpus:
+  type: mdn
+```
+
+Или Python-фабрика — функция, возвращающая `RAGAssistant`:
+
+```python
+# myconfigs.py
+def build_baseline():
+    from web_ai_assistant.rag import RAGAssistant
+    ...
+    return RAGAssistant(index=index, llm=llm)
+```
+
+### Запуск
+
+```bash
+# YAML + JSONL-вопросы (поля: question, ground_truth?, in_corpus?)
+webai-ab \
+  --a-config configs/baseline.yaml --a-name baseline \
+  --b-config configs/with_reranker.yaml --b-name reranker \
+  --questions data/eval_questions.jsonl \
+  --out-md reports/ab.md --out-json reports/ab.json --out-html reports/ab.html
+
+# Python-фабрики + последние 200 запросов из логов
+webai-ab \
+  --a-pyfunc myconfigs:build_baseline \
+  --b-pyfunc myconfigs:build_pilot \
+  --from-db logs/queries.db --db-limit 200 \
+  --ragas \
+  --out-html reports/pilot.html
+```
+
+Markdown печатается в stdout — удобно вставить в описание PR. JSON и HTML сохраняются по указанным путям.
+
+### Программный API
+
+```python
+from web_ai_assistant.eval.ab import run_ab
+from web_ai_assistant.eval.dataset import load_jsonl
+
+result = run_ab(
+    bot_a, bot_b,
+    items=load_jsonl("data/eval_questions.jsonl"),
+    name_a="baseline", name_b="reranker",
+    ragas=False,
+)
+print(result["paired_stats"])
+```
+
 ## Источники корпуса
 
 | Источник | Функция | Extras |
