@@ -91,6 +91,9 @@ dev = [
     "scikit-learn>=1.3",
 ]
 
+[project.scripts]
+webai-cache = "web_ai_assistant.cli.cache:main"
+
 [project.urls]
 Homepage = "https://github.com/IrinaZeroDev/web-ai-assistant-mvp"
 Repository = "https://github.com/IrinaZeroDev/web-ai-assistant-mvp"

@@ -25,6 +25,35 @@ pip install -e ".[llm,eval]"
 pip install -e ".[dev]"
 ```
 
+## Кэш эмбеддингов
+
+Снижает число API-вызовов GigaChat при переиндексации одного и того же корпуса. Хранилище — SQLite, ключ = `(model, sha256(text))`, поэтому `Embeddings` (1024) и `EmbeddingsGigaR` (2560) лежат в разных namespace.
+
+```python
+from web_ai_assistant.embeddings import GigaChatEmbedder, CachedEmbedder
+
+# Вариант 1: внешняя обёртка (работает с любым Embedder).
+base = GigaChatEmbedder(verify_ssl_certs=False)
+embedder = CachedEmbedder(base, cache_path="cache/embeddings.db")
+
+# Вариант 2: встроенный кэш GigaChatEmbedder (эквивалентно).
+embedder = GigaChatEmbedder(
+    verify_ssl_certs=False,
+    cache_path="cache/embeddings.db",
+)
+```
+
+При первом вызове `embed_passages` все недостающие векторы просчитаются и сохранятся; при повторном вызове с тем же корпусом — 0 сетевых вызовов. `embed_query` по умолчанию не кэшируется (включается `cache_queries=True`).
+
+### CLI
+
+```bash
+webai-cache stats                          # сводка по моделям
+webai-cache --path cache/embeddings.db stats
+webai-cache clear --model Embeddings       # удалить namespace
+webai-cache clear --all                    # очистить всё
+```
+
 ## Reranker (подъём faithfulness)
 
 После bi-encoder retrieval (ChromaDB) можно включить второй слой — cross-encoder, который перепроверяет каждую пару (query, passage) совместно. На больших корпусах это основной рычаг подъёма **faithfulness ≥ 0.9**.

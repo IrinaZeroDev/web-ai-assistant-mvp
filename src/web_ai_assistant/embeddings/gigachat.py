@@ -29,6 +29,25 @@ class GigaChatEmbeddingsConfigError(RuntimeError):
     """Поднимается при отсутствии или некорректной конфигурации."""
 
 
+class _SDKOnlyView:
+    """Прокси к SDK-пути GigaChatEmbedder без кэша.
+
+    Нужен, чтобы внутренний ``CachedEmbedder`` не зацикливался на верхний
+    ``GigaChatEmbedder.embed_passages``, который сам идёт через кэш.
+    """
+
+    def __init__(self, parent: GigaChatEmbedder) -> None:
+        self._parent = parent
+        self.model = parent.model
+        self.dim = parent.dim
+
+    def embed_passages(self, texts):
+        return self._parent._embed_passages_raw(list(texts))
+
+    def embed_query(self, text):  # не вызывается в пайплайне кэша, но для протокола
+        return self._parent.embed_query(text)
+
+
 class GigaChatEmbedder:
     """GigaChat Embeddings API.
 
@@ -44,6 +63,9 @@ class GigaChatEmbedder:
     :param max_retries: число повторов при сетевых сбоях / 5xx.
     :param retry_backoff: базовая задержка между ретраями (секунды),
         используется экспоненциальный backoff.
+    :param cache_path: путь к SQLite-кэшу эмбеддингов. Если задан — используется
+        внутренний ``CachedEmbedder`` (равносильно внешней обёртке над
+        этим же эмбеддером). ``None`` — кэш отключён.
     """
 
     def __init__(
@@ -59,6 +81,7 @@ class GigaChatEmbedder:
         query_instruction: str | None = None,
         max_retries: int = 3,
         retry_backoff: float = 1.5,
+        cache_path: str | None = None,
     ) -> None:
         try:
             from gigachat import GigaChat as _GigaChatSDK
@@ -98,12 +121,33 @@ class GigaChatEmbedder:
 
         self._client = _GigaChatSDK(**kwargs)
 
+        # Встроенный дисковый кэш. Держим его приватным — пользователь может
+        # объёня желании вынести эту обёртку наружу через CachedEmbedder.
+        self._cache_path = cache_path
+        self._cached_view = None
+        if cache_path is not None:
+            from .cache import CachedEmbedder
+
+            self._cached_view = CachedEmbedder(
+                _SDKOnlyView(self), cache_path=cache_path, model_key=model
+            )
+
     # ------------------------------------------------------------------
     # Public API
     # ------------------------------------------------------------------
 
     def embed_passages(self, texts: Iterable[str]) -> list[list[float]]:
-        items = list(texts)
+        if self._cached_view is not None:
+            return self._cached_view.embed_passages(texts)
+        return self._embed_passages_raw(list(texts))
+
+    def embed_query(self, text: str) -> list[float]:
+        q = text if not self.query_instruction else f"{self.query_instruction.rstrip()} {text}"
+        # query по умолчанию не кэшируются (уникальны)
+        return self._embed_batch([q])[0]
+
+    # Внутренний путь без кэша — используется в _SDKOnlyView.
+    def _embed_passages_raw(self, items: list[str]) -> list[list[float]]:
         if not items:
             return []
         out: list[list[float]] = []
@@ -111,10 +155,6 @@ class GigaChatEmbedder:
             batch = items[i : i + self.batch_size]
             out.extend(self._embed_batch(batch))
         return out
-
-    def embed_query(self, text: str) -> list[float]:
-        q = text if not self.query_instruction else f"{self.query_instruction.rstrip()} {text}"
-        return self._embed_batch([q])[0]
 
     # ------------------------------------------------------------------
     # Lifecycle

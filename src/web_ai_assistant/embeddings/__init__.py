@@ -12,6 +12,8 @@
   ``intfloat/multilingual-e5-large`` (1024 dim, GPU желателен).
 - :class:`web_ai_assistant.embeddings.gigachat.GigaChatEmbedder` — облачный
   GigaChat (``Embeddings`` 1024 / ``EmbeddingsGigaR`` 2560).
+- :class:`web_ai_assistant.embeddings.cache.CachedEmbedder` — дисковый кэш
+  поверх любого эмбеддера (SQLite).
 """
 
 from __future__ import annotations
@@ -19,7 +21,13 @@ from __future__ import annotations
 from collections.abc import Iterable
 from typing import Protocol, runtime_checkable
 
-__all__ = ["Embedder", "E5Embedder", "GigaChatEmbedder"]
+__all__ = [
+    "Embedder",
+    "E5Embedder",
+    "GigaChatEmbedder",
+    "CachedEmbedder",
+    "EmbeddingCache",
+]
 
 
 @runtime_checkable
@@ -41,4 +49,8 @@ def __getattr__(name: str):
         from .gigachat import GigaChatEmbedder
 
         return GigaChatEmbedder
+    if name in ("CachedEmbedder", "EmbeddingCache"):
+        from .cache import CachedEmbedder, EmbeddingCache  # noqa: F401
+
+        return locals()[name]
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
