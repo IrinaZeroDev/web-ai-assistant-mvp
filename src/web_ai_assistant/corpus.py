@@ -101,14 +101,19 @@ def split_documents(
     chunk_size: int = 900,
     chunk_overlap: int = 120,
 ) -> list[Chunk]:
-    """Разрезает документы на чанки через LangChain RecursiveCharacterTextSplitter."""
+    """Разрезает документы на чанки через LangChain RecursiveCharacterTextSplitter.
+
+    Splitter в первую очередь режет по заголовочным маркерам ``=== ... ===``,
+    которые расставляет PDF-загрузчик — это сохраняет связность главы.
+    """
     # импорт внутри, чтобы пакет грузился даже без langchain (для лёгких тестов)
     from langchain.text_splitter import RecursiveCharacterTextSplitter
 
     splitter = RecursiveCharacterTextSplitter(
         chunk_size=chunk_size,
         chunk_overlap=chunk_overlap,
-        separators=["\n\n", "\n", ". ", " ", ""],
+        # Порядок важен: сначала пробуем разбить по заголовкам, потом по абзацам.
+        separators=["\n=== ", "\n\n", "\n", ". ", " ", ""],
     )
     chunks: list[Chunk] = []
     for d in docs:
@@ -123,3 +128,27 @@ def split_documents(
                 )
             )
     return chunks
+
+
+# ---------------------------------------------------------------------------
+# Re-export PDF-loader — прямой импорт `from web_ai_assistant.corpus`.
+# ---------------------------------------------------------------------------
+
+
+def load_pdf_corpus(*args, **kwargs):
+    """Делегирует в :func:`web_ai_assistant.loaders.pdf.load_pdf_corpus`.
+
+    Обёртка нужна, чтобы pdfminer/pytesseract не подтягивались, пока не
+    позовут PDF-функции — пользователям MDN-режима ничего лишнего ставить
+    не придётся.
+    """
+    from .loaders.pdf import load_pdf_corpus as _load
+
+    return _load(*args, **kwargs)
+
+
+def load_pdf(*args, **kwargs):
+    """Загружает один PDF — см. :func:`web_ai_assistant.loaders.pdf.load_pdf`."""
+    from .loaders.pdf import load_pdf as _load
+
+    return _load(*args, **kwargs)

@@ -35,6 +35,8 @@ md("""## 1. Выбор провайдеров
 
 code('''PROVIDER   = "gigachat"   # LLM:      "gigachat" | "qwen"
 EMBEDDINGS = "gigachat"   # embedder: "gigachat" | "e5"
+CORPUS     = "mdn"        # корпус:   "mdn" | "pdf"
+PDF_PATH   = "/content/methodichki"  # используется если CORPUS="pdf"
 ''')
 
 md("## 2. Установка пакета")
@@ -43,9 +45,8 @@ code("""extras = {"server"}
 extras.add("gigachat" if PROVIDER == "gigachat" else "llm")
 if EMBEDDINGS == "gigachat":
     extras.add("gigachat")
-elif EMBEDDINGS == "e5":
-    # e5 идёт вместе с базовым набором RAG-ядра; убедимся что sentence-transformers есть
-    pass
+if CORPUS == "pdf":
+    extras.add("pdf")
 spec = "web-ai-assistant[" + ",".join(sorted(extras)) + "]"
 !pip install -q "git+https://github.com/IrinaZeroDev/web-ai-assistant-mvp.git@main#egg=$spec"
 """)
@@ -69,14 +70,23 @@ GIGACHAT_EMB_MODEL = "Embeddings"        # Embeddings (1024) | EmbeddingsGigaR (
 GIGACHAT_SCOPE     = "GIGACHAT_API_PERS" # PERS | B2B | CORP
 ''')
 
-md("## 3. Сборка корпуса, индекса и LLM")
+md("""## 3. Сборка корпуса, индекса и LLM
 
-code('''from web_ai_assistant.corpus import load_mdn_corpus, split_documents
+При `CORPUS="pdf"` — залейте папку с методичками в `PDF_PATH` (в Colab это удобно сделать через `Files → Upload`). Сканированные PDF без текстового слоя пропускаются (или включите OCR через `extras=["ocr"]`).
+""")
+
+code('''from web_ai_assistant.corpus import load_mdn_corpus, load_pdf_corpus, split_documents
 from web_ai_assistant.index import VectorIndex
 from web_ai_assistant.rag import RAGAssistant
 
 print("→ корпус…")
-docs = load_mdn_corpus()
+if CORPUS == "pdf":
+    docs = load_pdf_corpus(PDF_PATH, ocr_fallback=False)
+    print(f"  PDF-документов: {len(docs)}")
+    if not docs:
+        raise SystemExit(f"В {PDF_PATH} нет PDF — загрузите методички в эту папку")
+else:
+    docs = load_mdn_corpus()
 chunks = split_documents(docs)
 print(f"  чанков: {len(chunks)}")
 

@@ -25,6 +25,40 @@ pip install -e ".[llm,eval]"
 pip install -e ".[dev]"
 ```
 
+## Источники корпуса
+
+| Источник | Функция | Extras |
+|----------|---------|--------|
+| **MDN** (публичные web-доки) | `load_mdn_corpus()` | — (в базовом наборе) |
+| **PDF-методички** или папка PDF | `load_pdf_corpus(path)` | `[pdf]` |
+| **Сканы PDF** (без текстового слоя) | `load_pdf_corpus(path, ocr_fallback=True)` | `[ocr]` (+ system Tesseract & poppler) |
+
+### PDF: методички ИСТ ДГТУ прямо в RAG
+
+```python
+from web_ai_assistant.corpus import load_pdf_corpus, split_documents
+
+# 1) один файл, папка (рекурсивно) или список путей — единый API:
+docs = load_pdf_corpus("~/methodichki/ist")
+# или: load_pdf_corpus(["01_html.pdf", "02_css.pdf"])
+
+chunks = split_documents(docs)
+```
+
+Что делает PDF-loader:
+
+- **извлекает текст** постранично (pdfminer.six);
+- **убирает мусор**: повторяющиеся колонтитулы «Кафедра ИСТ ДГТУ», номера страниц, лигатуры, переносы;
+- **расставляет заголовки** (`=== Глава N === `) — splitter режет в первую очередь по ним, сохраняя связность в пределах главы;
+- **опциональный OCR** для страниц без текстового слоя.
+
+Для OCR доп. нужны системные пакеты:
+
+```bash
+sudo apt install -y tesseract-ocr tesseract-ocr-rus poppler-utils
+pip install -e ".[pdf,ocr]"
+```
+
 ## Провайдеры эмбеддингов
 
 | Провайдер | Класс | dim | Когда брать |
