@@ -56,6 +56,13 @@ gigachat = [
 pdf = [
     "pdfminer.six>=20231228",
 ]
+analytics = [
+    "scikit-learn>=1.3",
+    "numpy>=1.26",
+]
+hdbscan = [
+    "hdbscan>=0.8",
+]
 ocr = [
     "pdfminer.six>=20231228",
     "pytesseract>=0.3.10",
@@ -77,6 +84,7 @@ dev = [
     "httpx>=0.27",
     "pdfminer.six>=20231228",
     "fpdf2>=2.7",
+    "scikit-learn>=1.3",
 ]
 
 [project.urls]

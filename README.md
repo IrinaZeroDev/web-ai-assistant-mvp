@@ -25,6 +25,44 @@ pip install -e ".[llm,eval]"
 pip install -e ".[dev]"
 ```
 
+## Аналитика затруднений (дашборд топ-N кластеров)
+
+Каждый запрос логируется в SQLite (`logs/queries.db`), предварительно проходя PII-редакцию (email, телефоны, ФИО, студ.билеты). Для пилота 152-ФЗ этого достаточно.
+
+### Endpoint'ы
+
+| Путь | Что возвращает |
+|------|-----------------|
+| `GET /admin/clusters?n=8&backend=kmeans` | HTML-страница с топ-N кластеров + представителями |
+| `GET /admin/api/stats` | JSON: всего/заблокировано/эскалации/вне корпуса |
+| `GET /admin/api/clusters?n=8&backend=hdbscan` | JSON-передача кластеров |
+| `GET /admin/api/recent?limit=100` | Последние запросы (для ручного разбора) |
+
+### Что логируется
+
+PII-редактированные question/answer, `blocked` (red_zone | escalation | out_of_corpus | null), `max_sim`, latency, hash IP, имя LLM-провайдера, эмбеддинг вопроса (если `embedder_factory` передан в `create_app`).
+
+### Настройки
+
+```bash
+export LOG_QUERIES=false            # полный opt-out
+export LOG_DB_PATH=/var/log/web-ai/queries.db
+export ADMIN_PASSWORD=hunter2       # включает HTTP Basic на /admin/*
+```
+
+```python
+from web_ai_assistant.server import create_app
+from web_ai_assistant.embeddings import GigaChatEmbedder
+
+app = create_app(
+    assistant_factory=build_bot,
+    embedder_factory=lambda: GigaChatEmbedder(verify_ssl_certs=False),  # для кластеров
+    admin_password="hunter2",
+)
+```
+
+Backend кластеризации меняется через query: `?backend=kmeans` (по умолчанию) или `?backend=hdbscan` (ставится через `pip install -e \".[hdbscan]\"`).
+
 ## Источники корпуса
 
 | Источник | Функция | Extras |

@@ -42,8 +42,10 @@ class FakeAssistant:
 
 @pytest.fixture
 def client():
+    from web_ai_assistant.analytics.storage import QueryStore
     bot = FakeAssistant()
-    app = create_app(assistant_factory=lambda: bot)
+    # в тестах жёстко подсовываем in-memory базу — никаких боковых эффектов на диске
+    app = create_app(assistant_factory=lambda: bot, query_store=QueryStore(":memory:"))
     # Поскольку TestClient запускает startup автоматически — это сработает.
     with TestClient(app) as c:
         c.bot = bot  # type: ignore[attr-defined]
@@ -132,7 +134,8 @@ def test_ask_stream_blocked_short_circuits(client):
 
 
 def test_assistant_not_ready_returns_503():
-    app = create_app(assistant_factory=None)
+    from web_ai_assistant.analytics.storage import QueryStore
+    app = create_app(assistant_factory=None, query_store=QueryStore(":memory:"))
     with TestClient(app) as c:
         assert c.get("/healthz").json()["assistant_ready"] is False
         assert c.post("/ask", json={"question": "test"}).status_code == 503
