@@ -63,6 +63,10 @@ analytics = [
 hdbscan = [
     "hdbscan>=0.8",
 ]
+reranker = [
+    "sentence-transformers>=3.3",
+    "torch>=2.3",
+]
 ocr = [
     "pdfminer.six>=20231228",
     "pytesseract>=0.3.10",
