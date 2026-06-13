@@ -20,6 +20,8 @@ from web_ai_assistant.cli.eval_validate import (
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 DATASET_V1 = REPO_ROOT / "data" / "eval" / "questions_v1.jsonl"
+DATASET_V2 = REPO_ROOT / "data" / "eval" / "questions_v2.jsonl"
+DATASET_FINAL = REPO_ROOT / "data" / "eval" / "questions.jsonl"
 SCHEMA = REPO_ROOT / "data" / "eval" / "schema.json"
 
 
@@ -86,6 +88,90 @@ def test_v1_escalation_questions_trigger_guard() -> None:
                 assert is_escalation(q), f"{o['id']}: escalation не сработал на: {q}"
             elif c in ("in_corpus", "off_topic"):
                 assert not is_escalation(q), f"{o['id']}: ложное срабатывание escalation на: {q}"
+
+
+# --------------------------------------------------------------------------- #
+#                      Качество черновика v2 (50, 3 дисциплины)             #
+# --------------------------------------------------------------------------- #
+
+
+@pytest.mark.skipif(not DATASET_V2.exists(), reason="dataset v2 ещё не создан")
+def test_v2_dataset_passes_schema() -> None:
+    errors, _w, counts = validate_dataset(DATASET_V2, SCHEMA)
+    assert not errors, "Errors в черновике v2:\n" + "\n".join(errors)
+    assert sum(counts.values()) == 50
+
+
+@pytest.mark.skipif(not DATASET_V2.exists(), reason="dataset v2 ещё не создан")
+def test_v2_proportions() -> None:
+    _e, _w, counts = validate_dataset(DATASET_V2, SCHEMA)
+    assert counts["in_corpus"] == 30
+    assert counts["off_topic"] == 10
+    assert counts["red_zone"] == 5
+    assert counts["escalation"] == 5
+
+
+@pytest.mark.skipif(not DATASET_V2.exists(), reason="dataset v2 ещё не создан")
+def test_v2_discipline_coverage() -> None:
+    """v2 покрывает ровно 3 новые дисциплины in_corpus, по 10 каждой."""
+    from collections import Counter
+
+    in_corpus_by_disc: Counter = Counter()
+    with DATASET_V2.open(encoding="utf-8") as f:
+        for line in f:
+            if not line.strip():
+                continue
+            o = json.loads(line)
+            if o["category"] == "in_corpus":
+                in_corpus_by_disc[o["discipline"]] += 1
+    assert in_corpus_by_disc["system_analysis"] == 10
+    assert in_corpus_by_disc["ml"] == 10
+    assert in_corpus_by_disc["web_design"] == 10
+
+
+@pytest.mark.skipif(not DATASET_V2.exists(), reason="dataset v2 ещё не создан")
+def test_v2_guards_trigger_correctly() -> None:
+    from web_ai_assistant.guards import is_escalation, is_red_zone
+
+    with DATASET_V2.open(encoding="utf-8") as f:
+        for line in f:
+            if not line.strip():
+                continue
+            o = json.loads(line)
+            q, c = o["question"], o["category"]
+            if c == "red_zone":
+                assert is_red_zone(q), f"{o['id']}: red_zone не сработал: {q}"
+            if c == "escalation":
+                assert is_escalation(q), f"{o['id']}: escalation не сработал: {q}"
+            if c in ("in_corpus", "off_topic"):
+                assert not is_red_zone(q), f"{o['id']}: ложный red_zone: {q}"
+                assert not is_escalation(q), f"{o['id']}: ложный escalation: {q}"
+
+
+# --------------------------------------------------------------------------- #
+#                  Головной датасет пилота (100 вопросов)                #
+# --------------------------------------------------------------------------- #
+
+
+@pytest.mark.skipif(not DATASET_FINAL.exists(), reason="questions.jsonl ещё не создан")
+def test_final_dataset_has_100_items_and_passes_schema() -> None:
+    errors, _w, counts = validate_dataset(DATASET_FINAL, SCHEMA)
+    assert not errors, "Errors в финальном датасете:\n" + "\n".join(errors)
+    assert sum(counts.values()) == 100
+    assert counts["in_corpus"] == 60
+    assert counts["off_topic"] == 20
+    assert counts["red_zone"] == 10
+    assert counts["escalation"] == 10
+
+
+@pytest.mark.skipif(not DATASET_FINAL.exists(), reason="questions.jsonl ещё не создан")
+def test_final_dataset_unique_ids_across_v1_and_v2() -> None:
+    ids = []
+    with DATASET_FINAL.open(encoding="utf-8") as f:
+        for line in f:
+            if line.strip():
+                ids.append(json.loads(line)["id"])
+    assert len(ids) == len(set(ids)), "Дубликаты id при объединении v1+v2"
 
 
 # --------------------------------------------------------------------------- #

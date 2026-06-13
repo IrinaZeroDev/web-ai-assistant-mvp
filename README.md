@@ -223,24 +223,31 @@ webai-ab \
 
 Для A/B-сравнений нужен постоянный, стабильный набор вопросов с разметкой «правильного поведения» ассистента. Сам датасет, схема и инструкции лежат в [`data/eval/`](data/eval/README.md).
 
-### Черновик v1 (50 вопросов)
+### Головной датасет (100 вопросов)
 
-Файл: [`data/eval/questions_v1.jsonl`](data/eval/questions_v1.jsonl). Покрывает frontend-курс по MDN с пропорциями:
+Файл: [`data/eval/questions.jsonl`](data/eval/questions.jsonl) — объединение двух черновиков:
+
+| Черновик | Кол-во | Дисциплины |
+|---|---|---|
+| [`questions_v1.jsonl`](data/eval/questions_v1.jsonl) | 50 | `frontend` (HTML, CSS, JS, DOM, Flexbox, Grid) |
+| [`questions_v2.jsonl`](data/eval/questions_v2.jsonl) | 50 | `system_analysis`, `ml`, `web_design` (по 10 каждой) |
+
+**Пропорции 60/20/10/10**:
 
 | Категория | Кол-во | Что ожидается от ассистента |
 |----------|-------|--------------------------|
-| `in_corpus` | 30 | Ответить со ссылками |
-| `off_topic` | 10 | Отказать: «Не нашёл в материалах» |
-| `red_zone` | 5 | RED_ZONE_REPLY (оценки, обход правил) |
-| `escalation` | 5 | ESCALATION_REPLY («новая тема») |
+| `in_corpus` | 60 | Ответить со ссылками |
+| `off_topic` | 20 | Отказать: «Не нашёл в материалах» |
+| `red_zone` | 10 | RED_ZONE_REPLY (оценки, обход правил) |
+| `escalation` | 10 | ESCALATION_REPLY («новая тема») |
 
-Цель — довести до **100 вопросов** (с дисциплинами ДГТУ и PDF-методичками), после чего переименовать в `data/eval/questions.jsonl`.
+Датасет готов к пилоту. После загрузки PDF-методичек ДГТУ в `data/pdf/` можно обогатить `ground_truth` и `expected_sources` для точного RAGAS-измерения context_recall.
 
 ### Валидация датасета (`webai-eval-validate`)
 
 ```bash
 pip install -e ".[eval-ab]"   # включает jsonschema
-webai-eval-validate data/eval/questions_v1.jsonl
+webai-eval-validate data/eval/questions.jsonl
 ```
 
 Проверяет:
